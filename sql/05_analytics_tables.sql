@@ -3,506 +3,584 @@
 -- File: 05_analytics_tables.sql
 --
 -- Purpose:
--- This script transforms validated RAW data into the
--- ANALYTICS layer.
+-- Transform validated RAW data into the ANALYTICS layer.
 --
--- Our analytics model contains:
---
---     DIM_CUSTOMERS
---     DIM_PRODUCTS
---     FACT_ORDERS
---     FACT_ORDER_ITEMS
---
--- This is a simple star-schema style design.
---
---
--- Data flow:
+-- RAW layer:
 --
 --     RAW_CUSTOMERS
---          ↓
---     DIM_CUSTOMERS
---
 --     RAW_PRODUCTS
---          ↓
---     DIM_PRODUCTS
---
 --     RAW_ORDERS
---          ↓
---     FACT_ORDERS
---
 --     RAW_ORDER_ITEMS
---          ↓
+--
+-- ANALYTICS layer:
+--
+--     DIM_CUSTOMERS
+--     DIM_PRODUCTS
+--     FACT_ORDERS
 --     FACT_ORDER_ITEMS
 --
+-- ============================================================
+--
+-- DATA FLOW:
+--
+--                 RAW
+--                  │
+--                  │
+--                  ▼
+--          DATA QUALITY CHECKS
+--                  │
+--                  ▼
+--              ANALYTICS
+--                  │
+--       ┌──────────┴──────────┐
+--       │                     │
+--       ▼                     ▼
+-- DIM_CUSTOMERS        DIM_PRODUCTS
+--       │                     │
+--       └──────────┬──────────┘
+--                  │
+--                  ▼
+--             FACT_ORDERS
+--                  │
+--                  ▼
+--          FACT_ORDER_ITEMS
+--
+-- ============================================================
 --
 -- IMPORTANT:
--- This script is executed ONLY after the data quality checks
--- have passed.
 --
--- Execution order:
+-- This script recreates the ANALYTICS tables from the current
+-- RAW data.
 --
---     01_database_setup.sql
---             ↓
---     02_raw_tables.sql
---             ↓
---     03_load_data.sql
---             ↓
---     04_data_quality.sql
---             ↓
---     05_analytics_tables.sql
+-- This approach is appropriate for our small demonstration
+-- project and keeps the pipeline simple.
+--
+-- In a production environment, incremental loading, MERGE,
+-- slowly changing dimensions, and orchestration would normally
+-- be considered.
 --
 -- ============================================================
 
 
 -- ============================================================
--- STEP 1: SELECT DATABASE, SCHEMA AND WAREHOUSE
--- ============================================================
---
--- We explicitly select the required Snowflake objects so
--- the script behaves predictably when executed through Python.
+-- STEP 1: SELECT DATABASE
 -- ============================================================
 
 USE DATABASE ECOMMERCE_DB;
 
+
+-- ============================================================
+-- STEP 2: SELECT ANALYTICS SCHEMA
+-- ============================================================
+
 USE SCHEMA ANALYTICS;
+
+
+-- ============================================================
+-- STEP 3: SELECT WAREHOUSE
+-- ============================================================
 
 USE WAREHOUSE ECOMMERCE_WH;
 
 
 -- ============================================================
--- IMPORTANT DESIGN DECISION: FULL REFRESH
+-- STEP 4: CREATE ANALYTICS SCHEMA IF REQUIRED
 -- ============================================================
 --
--- For this project we are using a FULL REFRESH strategy.
+-- This statement ensures that the ANALYTICS schema exists.
 --
--- That means every successful pipeline run rebuilds the
--- analytics tables from the current RAW data.
+-- ============================================================
+
+CREATE SCHEMA IF NOT EXISTS ANALYTICS;
+
+
+-- ============================================================
+-- STEP 5: REMOVE OLD ANALYTICS TABLES
+-- ============================================================
 --
--- Example:
+-- We use CREATE OR REPLACE TABLE below, so explicit DROP
+-- statements are not required.
 --
---     RAW_CUSTOMERS
---          ↓
---     CREATE OR REPLACE TABLE
---          ↓
---     DIM_CUSTOMERS
---
--- Why are we using full refresh?
---
--- Our dataset is small and this keeps the pipeline simple
--- and easy to understand.
---
--- In a large production system, we could use:
---
---     - MERGE
---     - Incremental loading
---     - Streams
---     - Tasks
---     - CDC
---
--- But those are unnecessary for this project.
+-- CREATE OR REPLACE TABLE allows us to rebuild the analytics
+-- layer from the latest RAW data.
 --
 -- ============================================================
 
 
 -- ============================================================
--- STEP 2: CREATE DIM_CUSTOMERS
+-- STEP 6: CREATE DIM_CUSTOMERS
 -- ============================================================
 --
--- DIM_CUSTOMERS is a DIMENSION table.
---
--- Grain:
---
---     One row = one customer
+-- Purpose:
+-- Store customer information in the analytics layer.
 --
 -- Source:
 --
 --     RAW.RAW_CUSTOMERS
 --
--- We perform small transformations here:
+-- Grain:
 --
---     TRIM(customer_name)
---     LOWER(email)
---     TRIM(city)
---     TRIM(country)
+--     One row = one customer
 --
--- We also remove records with NULL customer IDs.
+-- Primary key:
 --
--- Why?
+--     CUSTOMER_ID
 --
--- customer_id is the logical identifier for a customer.
 -- ============================================================
 
-CREATE OR REPLACE TABLE DIM_CUSTOMERS AS
+CREATE OR REPLACE TABLE ECOMMERCE_DB.ANALYTICS.DIM_CUSTOMERS
+(
+    CUSTOMER_ID      NUMBER,
+    CUSTOMER_NAME    VARCHAR,
+    EMAIL            VARCHAR,
+    CITY             VARCHAR,
+    COUNTRY          VARCHAR
+);
+
+
+-- ============================================================
+-- LOAD DIM_CUSTOMERS
+-- ============================================================
+--
+-- We select the validated customer records from the RAW layer.
+--
+-- ============================================================
+
+INSERT INTO ECOMMERCE_DB.ANALYTICS.DIM_CUSTOMERS
+(
+    CUSTOMER_ID,
+    CUSTOMER_NAME,
+    EMAIL,
+    CITY,
+    COUNTRY
+)
 
 SELECT
-    customer_id,
+    CUSTOMER_ID,
+    CUSTOMER_NAME,
+    EMAIL,
+    CITY,
+    COUNTRY
 
-    -- Remove unnecessary spaces from the customer name.
-    TRIM(customer_name) AS customer_name,
-
-    -- Standardize email addresses to lowercase.
-    LOWER(TRIM(email)) AS email,
-
-    -- Remove unnecessary spaces from city.
-    TRIM(city) AS city,
-
-    -- Remove unnecessary spaces from country.
-    TRIM(country) AS country
-
-FROM ECOMMERCE_DB.RAW.RAW_CUSTOMERS
-
-WHERE customer_id IS NOT NULL;
+FROM ECOMMERCE_DB.RAW.RAW_CUSTOMERS;
 
 
 -- ============================================================
--- DIM_CUSTOMERS CREATED
+-- STEP 7: CREATE DIM_PRODUCTS
 -- ============================================================
 --
--- Result:
---
--- DIM_CUSTOMERS
--- ---------------------------------------------
--- customer_id
--- customer_name
--- email
--- city
--- country
---
--- Grain:
---
---     One row per customer
---
--- ============================================================
-
-
--- ============================================================
--- STEP 3: CREATE DIM_PRODUCTS
--- ============================================================
---
--- DIM_PRODUCTS is another DIMENSION table.
---
--- Grain:
---
---     One row = one product
+-- Purpose:
+-- Store product information in the analytics layer.
 --
 -- Source:
 --
 --     RAW.RAW_PRODUCTS
 --
--- Transformations:
+-- Grain:
 --
---     TRIM(product_name)
---     TRIM(category)
+--     One row = one product
 --
--- We only keep products with:
+-- Primary key:
 --
---     product_id IS NOT NULL
---     unit_price > 0
+--     PRODUCT_ID
 --
--- Data quality checks should already have caught invalid
--- records, but these conditions provide an additional safety
--- layer.
 -- ============================================================
 
-CREATE OR REPLACE TABLE DIM_PRODUCTS AS
+CREATE OR REPLACE TABLE ECOMMERCE_DB.ANALYTICS.DIM_PRODUCTS
+(
+    PRODUCT_ID       NUMBER,
+    PRODUCT_NAME     VARCHAR,
+    CATEGORY         VARCHAR,
+    UNIT_PRICE       NUMBER(10,2)
+);
+
+
+-- ============================================================
+-- LOAD DIM_PRODUCTS
+-- ============================================================
+
+INSERT INTO ECOMMERCE_DB.ANALYTICS.DIM_PRODUCTS
+(
+    PRODUCT_ID,
+    PRODUCT_NAME,
+    CATEGORY,
+    UNIT_PRICE
+)
 
 SELECT
-    product_id,
+    PRODUCT_ID,
+    PRODUCT_NAME,
+    CATEGORY,
+    UNIT_PRICE
 
-    -- Remove unnecessary spaces from product name.
-    TRIM(product_name) AS product_name,
-
-    -- Standardize category formatting.
-    TRIM(category) AS category,
-
-    -- Keep the validated product price.
-    unit_price
-
-FROM ECOMMERCE_DB.RAW.RAW_PRODUCTS
-
-WHERE product_id IS NOT NULL
-  AND unit_price > 0;
+FROM ECOMMERCE_DB.RAW.RAW_PRODUCTS;
 
 
 -- ============================================================
--- DIM_PRODUCTS CREATED
+-- STEP 8: CREATE FACT_ORDERS
 -- ============================================================
 --
--- Result:
---
--- DIM_PRODUCTS
--- ---------------------------------------------
--- product_id
--- product_name
--- category
--- unit_price
---
--- Grain:
---
---     One row per product
---
--- ============================================================
-
-
--- ============================================================
--- STEP 4: CREATE FACT_ORDERS
--- ============================================================
---
--- FACT_ORDERS is a FACT table.
---
--- Grain:
---
---     One row = one order
+-- Purpose:
+-- Store order-level transactional information.
 --
 -- Source:
 --
 --     RAW.RAW_ORDERS
 --
--- Transformations:
+-- Grain:
 --
---     UPPER(status)
---     TRIM(status)
+--     One row = one order
 --
--- We keep:
+-- Important relationships:
 --
---     order_id
---     customer_id
---     order_date
---     status
+--     CUSTOMER_ID → DIM_CUSTOMERS.CUSTOMER_ID
 --
--- Notice that we do NOT join products here.
---
--- Why?
---
--- FACT_ORDERS represents the ORDER level.
---
--- Product information belongs at the ORDER ITEM level,
--- which is handled by FACT_ORDER_ITEMS.
---
--- This preserves the correct grain.
 -- ============================================================
 
-CREATE OR REPLACE TABLE FACT_ORDERS AS
+CREATE OR REPLACE TABLE ECOMMERCE_DB.ANALYTICS.FACT_ORDERS
+(
+    ORDER_ID       NUMBER,
+    CUSTOMER_ID    NUMBER,
+    ORDER_DATE     DATE,
+    STATUS         VARCHAR
+);
+
+
+-- ============================================================
+-- LOAD FACT_ORDERS
+-- ============================================================
+--
+-- Only validated orders are loaded.
+--
+-- Because the data quality step already verified referential
+-- integrity, CUSTOMER_ID should exist in DIM_CUSTOMERS.
+--
+-- ============================================================
+
+INSERT INTO ECOMMERCE_DB.ANALYTICS.FACT_ORDERS
+(
+    ORDER_ID,
+    CUSTOMER_ID,
+    ORDER_DATE,
+    STATUS
+)
 
 SELECT
-    order_id,
+    ORDER_ID,
+    CUSTOMER_ID,
+    ORDER_DATE,
+    STATUS
 
-    -- Customer associated with the order.
-    customer_id,
-
-    -- Date on which the order was placed.
-    order_date,
-
-    -- Standardize status values.
-    UPPER(TRIM(status)) AS status
-
-FROM ECOMMERCE_DB.RAW.RAW_ORDERS
-
-WHERE order_id IS NOT NULL
-  AND customer_id IS NOT NULL;
+FROM ECOMMERCE_DB.RAW.RAW_ORDERS;
 
 
 -- ============================================================
--- FACT_ORDERS CREATED
+-- STEP 9: CREATE FACT_ORDER_ITEMS
 -- ============================================================
 --
--- Result:
---
--- FACT_ORDERS
--- ---------------------------------------------
--- order_id
--- customer_id
--- order_date
--- status
---
--- Grain:
---
---     One row per order
---
--- ============================================================
-
-
--- ============================================================
--- STEP 5: CREATE FACT_ORDER_ITEMS
--- ============================================================
---
--- FACT_ORDER_ITEMS is our second FACT table.
---
--- Grain:
---
---     One row = one product line inside an order
+-- Purpose:
+-- Store individual products purchased within each order.
 --
 -- Source:
 --
 --     RAW.RAW_ORDER_ITEMS
 --
--- We keep:
---
---     order_id
---     product_id
---     quantity
---     unit_price
---
--- And we create:
---
---     item_total
---
--- Formula:
---
---     item_total = quantity × unit_price
---
--- Example:
---
--- quantity   = 3
--- unit_price = 500
---
--- item_total = 3 × 500
---            = 1500
---
--- This calculated metric is useful for revenue analysis.
--- ============================================================
-
-CREATE OR REPLACE TABLE FACT_ORDER_ITEMS AS
-
-SELECT
-    order_id,
-
-    -- Product associated with this order item.
-    product_id,
-
-    -- Number of units purchased.
-    quantity,
-
-    -- Price of one unit at the time of the order.
-    unit_price,
-
-    -- Total value of this individual order line.
-    quantity * unit_price AS item_total
-
-FROM ECOMMERCE_DB.RAW.RAW_ORDER_ITEMS
-
-WHERE order_id IS NOT NULL
-  AND product_id IS NOT NULL
-  AND quantity > 0
-  AND unit_price > 0;
-
-
--- ============================================================
--- FACT_ORDER_ITEMS CREATED
--- ============================================================
---
--- Result:
---
--- FACT_ORDER_ITEMS
--- ---------------------------------------------
--- order_id
--- product_id
--- quantity
--- unit_price
--- item_total
---
 -- Grain:
 --
---     One row per product line within an order
+--     One row = one product line within an order
+--
+-- Relationships:
+--
+--     ORDER_ID
+--         ↓
+--     FACT_ORDERS.ORDER_ID
+--
+--     PRODUCT_ID
+--         ↓
+--     DIM_PRODUCTS.PRODUCT_ID
 --
 -- ============================================================
 
+CREATE OR REPLACE TABLE ECOMMERCE_DB.ANALYTICS.FACT_ORDER_ITEMS
+(
+    ORDER_ID       NUMBER,
+    PRODUCT_ID     NUMBER,
+    QUANTITY       NUMBER,
+    UNIT_PRICE     NUMBER(10,2)
+);
+
 
 -- ============================================================
--- STEP 6: VERIFY ANALYTICS TABLES
+-- LOAD FACT_ORDER_ITEMS
 -- ============================================================
 --
--- These queries allow us to confirm that the transformation
--- successfully produced records in all four analytics tables.
+-- The order item records are copied from the validated RAW
+-- table.
 --
--- Python can later execute these queries or perform equivalent
--- checks after the transformation.
+-- ============================================================
+
+INSERT INTO ECOMMERCE_DB.ANALYTICS.FACT_ORDER_ITEMS
+(
+    ORDER_ID,
+    PRODUCT_ID,
+    QUANTITY,
+    UNIT_PRICE
+)
+
+SELECT
+    ORDER_ID,
+    PRODUCT_ID,
+    QUANTITY,
+    UNIT_PRICE
+
+FROM ECOMMERCE_DB.RAW.RAW_ORDER_ITEMS;
+
+
+-- ============================================================
+-- STEP 10: VERIFY ANALYTICS ROW COUNTS
+-- ============================================================
+--
+-- This verifies that the transformation from RAW to ANALYTICS
+-- produced the expected number of records.
+--
 -- ============================================================
 
 SELECT
     'DIM_CUSTOMERS' AS table_name,
     COUNT(*) AS row_count
-FROM DIM_CUSTOMERS
+
+FROM ECOMMERCE_DB.ANALYTICS.DIM_CUSTOMERS
 
 UNION ALL
 
 SELECT
     'DIM_PRODUCTS' AS table_name,
     COUNT(*) AS row_count
-FROM DIM_PRODUCTS
+
+FROM ECOMMERCE_DB.ANALYTICS.DIM_PRODUCTS
 
 UNION ALL
 
 SELECT
     'FACT_ORDERS' AS table_name,
     COUNT(*) AS row_count
-FROM FACT_ORDERS
+
+FROM ECOMMERCE_DB.ANALYTICS.FACT_ORDERS
 
 UNION ALL
 
 SELECT
     'FACT_ORDER_ITEMS' AS table_name,
     COUNT(*) AS row_count
-FROM FACT_ORDER_ITEMS;
+
+FROM ECOMMERCE_DB.ANALYTICS.FACT_ORDER_ITEMS;
 
 
 -- ============================================================
--- STEP 7: FINAL ANALYTICS MODEL
+-- STEP 11: VERIFY CUSTOMER DATA
 -- ============================================================
 --
--- After this script executes successfully, our Snowflake
--- architecture looks like:
---
---
---                 DIM_CUSTOMERS
---                       |
---                       | customer_id
---                       |
---                       v
---                  FACT_ORDERS
---                       |
---                       | order_id
---                       |
---                       v
---                FACT_ORDER_ITEMS
---                       ^
---                       |
---                       | product_id
---                       |
---                 DIM_PRODUCTS
---
---
--- DIMENSIONS:
---
---     DIM_CUSTOMERS
---     DIM_PRODUCTS
---
--- FACTS:
---
---     FACT_ORDERS
---     FACT_ORDER_ITEMS
+-- Display a few customer records from the analytics layer.
 --
 -- ============================================================
 
+SELECT
+    *
+
+FROM ECOMMERCE_DB.ANALYTICS.DIM_CUSTOMERS
+
+LIMIT 10;
+
 
 -- ============================================================
--- TRANSFORMATION COMPLETE
+-- STEP 12: VERIFY PRODUCT DATA
+-- ============================================================
+
+SELECT
+    *
+
+FROM ECOMMERCE_DB.ANALYTICS.DIM_PRODUCTS
+
+LIMIT 10;
+
+
+-- ============================================================
+-- STEP 13: VERIFY ORDER DATA
+-- ============================================================
+
+SELECT
+    *
+
+FROM ECOMMERCE_DB.ANALYTICS.FACT_ORDERS
+
+LIMIT 10;
+
+
+-- ============================================================
+-- STEP 14: VERIFY ORDER ITEM DATA
+-- ============================================================
+
+SELECT
+    *
+
+FROM ECOMMERCE_DB.ANALYTICS.FACT_ORDER_ITEMS
+
+LIMIT 10;
+
+
+-- ============================================================
+-- STEP 15: VERIFY ANALYTICS RELATIONSHIPS
 -- ============================================================
 --
--- The pipeline has now completed:
+-- This query checks that every order has a customer in the
+-- dimension table.
 --
---     SOURCE CSV
---          ↓
---     SNOWFLAKE STAGE
---          ↓
---     RAW TABLES
---          ↓
---     DATA QUALITY
---          ↓
---     ANALYTICS TABLES
+-- Expected result:
 --
--- The next file contains business analytics queries:
+--     0
 --
---     06_business_queries.sql
+-- ============================================================
+
+SELECT
+    COUNT(*) AS invalid_order_customer_relationships
+
+FROM ECOMMERCE_DB.ANALYTICS.FACT_ORDERS AS O
+
+LEFT JOIN ECOMMERCE_DB.ANALYTICS.DIM_CUSTOMERS AS C
+    ON O.CUSTOMER_ID = C.CUSTOMER_ID
+
+WHERE C.CUSTOMER_ID IS NULL;
+
+
+-- ============================================================
+-- STEP 16: VERIFY ORDER ITEM → ORDER RELATIONSHIP
+-- ============================================================
+--
+-- Every order item should belong to an existing order.
+--
+-- Expected result:
+--
+--     0
+--
+-- ============================================================
+
+SELECT
+    COUNT(*) AS invalid_order_item_order_relationships
+
+FROM ECOMMERCE_DB.ANALYTICS.FACT_ORDER_ITEMS AS OI
+
+LEFT JOIN ECOMMERCE_DB.ANALYTICS.FACT_ORDERS AS O
+    ON OI.ORDER_ID = O.ORDER_ID
+
+WHERE O.ORDER_ID IS NULL;
+
+
+-- ============================================================
+-- STEP 17: VERIFY ORDER ITEM → PRODUCT RELATIONSHIP
+-- ============================================================
+--
+-- Every order item should reference an existing product.
+--
+-- Expected result:
+--
+--     0
+--
+-- ============================================================
+
+SELECT
+    COUNT(*) AS invalid_order_item_product_relationships
+
+FROM ECOMMERCE_DB.ANALYTICS.FACT_ORDER_ITEMS AS OI
+
+LEFT JOIN ECOMMERCE_DB.ANALYTICS.DIM_PRODUCTS AS P
+    ON OI.PRODUCT_ID = P.PRODUCT_ID
+
+WHERE P.PRODUCT_ID IS NULL;
+
+
+-- ============================================================
+-- STEP 18: SAMPLE ANALYTICS QUERY
+-- ============================================================
+--
+-- This demonstrates how the analytics layer can be used.
+--
+-- Calculate total spending for each customer.
+--
+-- Formula:
+--
+--     QUANTITY × UNIT_PRICE
+--
+-- ============================================================
+
+SELECT
+    C.CUSTOMER_ID,
+    C.CUSTOMER_NAME,
+
+    SUM(
+        OI.QUANTITY * OI.UNIT_PRICE
+    ) AS TOTAL_SPENDING
+
+FROM ECOMMERCE_DB.ANALYTICS.DIM_CUSTOMERS AS C
+
+INNER JOIN ECOMMERCE_DB.ANALYTICS.FACT_ORDERS AS O
+    ON C.CUSTOMER_ID = O.CUSTOMER_ID
+
+INNER JOIN ECOMMERCE_DB.ANALYTICS.FACT_ORDER_ITEMS AS OI
+    ON O.ORDER_ID = OI.ORDER_ID
+
+GROUP BY
+    C.CUSTOMER_ID,
+    C.CUSTOMER_NAME
+
+ORDER BY TOTAL_SPENDING DESC
+
+LIMIT 10;
+
+
+-- ============================================================
+-- PIPELINE STAGE COMPLETE
+-- ============================================================
+--
+-- At this point our architecture is:
+--
+--
+--                    CSV FILES
+--                        │
+--                        ▼
+--                PYTHON STAGE LOADER
+--                        │
+--                        ▼
+--               SNOWFLAKE INTERNAL STAGE
+--                        │
+--                        ▼
+--                  RAW TABLES
+--                        │
+--                        ▼
+--              DATA QUALITY CHECKS
+--                        │
+--                        ▼
+--                 ANALYTICS LAYER
+--                        │
+--            ┌───────────┼───────────┐
+--            │           │           │
+--            ▼           ▼           ▼
+--       DIM_CUSTOMERS DIM_PRODUCTS FACT_ORDERS
+--                                      │
+--                                      ▼
+--                               FACT_ORDER_ITEMS
+--
+-- ============================================================
+--
+-- NEXT STEP:
+--
+-- Create the Python automation for this analytics SQL file.
+--
+-- The Python pipeline will eventually execute:
+--
+--     1. Stage Loader
+--     2. 03_load_data.sql
+--     3. 04_data_quality.sql
+--     4. 05_analytics_tables.sql
+--     5. Pipeline audit / logging
 --
 -- ============================================================
