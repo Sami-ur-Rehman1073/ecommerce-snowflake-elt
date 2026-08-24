@@ -45,3 +45,35 @@ SELECT
 FROM RAW.RAW_PRODUCTS
 GROUP BY product_id
 HAVING COUNT(*) > 1;
+
+
+
+-- NULL order IDs
+
+
+
+SELECT COUNT(*) AS null_order_ids
+FROM RAW.RAW_ORDERS
+WHERE order_id IS NULL;
+
+
+-- Invalid statuses
+
+
+
+SELECT COUNT(*) AS invalid_statuses
+FROM RAW.RAW_ORDERS
+WHERE UPPER(TRIM(status))
+      NOT IN ('COMPLETED', 'PENDING', 'CANCELLED');
+
+
+
+-- Duplicate orders
+
+
+SELECT
+    order_id,
+    COUNT(*) AS duplicate_count
+FROM RAW.RAW_ORDERS
+GROUP BY order_id
+HAVING COUNT(*) > 1;
