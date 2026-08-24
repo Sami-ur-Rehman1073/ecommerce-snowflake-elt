@@ -7,15 +7,15 @@
 -- stage into the RAW tables.
 --
 -- IMPORTANT:
--- Python will upload the CSV files to the stage BEFORE this
+-- Python uploads the CSV files to the stage BEFORE this
 -- script is executed.
 --
 -- Expected files in the stage:
 --
---     @ECOMMERCE_STAGE/customers.csv
---     @ECOMMERCE_STAGE/products.csv
---     @ECOMMERCE_STAGE/orders.csv
---     @ECOMMERCE_STAGE/order_items.csv
+--     @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/customers.csv
+--     @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/products.csv
+--     @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/orders.csv
+--     @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/order_items.csv
 --
 -- Execution order:
 --
@@ -26,33 +26,60 @@
 --     Python uploads CSV files
 --             ↓
 --     03_load_data.sql
+--             ↓
+--     RAW tables populated
+--             ↓
+--     04_data_quality.sql
 --
 -- ============================================================
 
 
 -- ============================================================
--- STEP 1: SELECT DATABASE, SCHEMA AND WAREHOUSE
+-- STEP 1: SELECT DATABASE
 -- ============================================================
 --
--- Explicitly selecting these objects makes the script
--- predictable when it is executed from Python.
+-- We explicitly select the database.
+--
+-- Although the objects below are fully qualified, setting the
+-- database makes the script easier to understand when running
+-- it manually in Snowflake.
 -- ============================================================
 
 USE DATABASE ECOMMERCE_DB;
 
+
+-- ============================================================
+-- STEP 2: SELECT RAW SCHEMA
+-- ============================================================
+--
+-- RAW is our ingestion layer.
+--
+-- The RAW layer contains data loaded directly from the source
+-- CSV files with minimal transformation.
+-- ============================================================
+
 USE SCHEMA RAW;
+
+
+-- ============================================================
+-- STEP 3: SELECT WAREHOUSE
+-- ============================================================
+--
+-- The warehouse provides the compute resources required to
+-- execute the COPY commands and validation queries.
+-- ============================================================
 
 USE WAREHOUSE ECOMMERCE_WH;
 
 
 -- ============================================================
--- STEP 2: CHECK THE STAGE
+-- STEP 4: CHECK THE SNOWFLAKE STAGE
 -- ============================================================
 --
--- LIST shows the files currently available in the stage.
+-- LIST displays files currently available in our internal
+-- Snowflake stage.
 --
--- During development, you can use this to verify that Python
--- successfully uploaded the CSV files.
+-- This is primarily useful during development and debugging.
 --
 -- Expected files:
 --
@@ -61,176 +88,192 @@ USE WAREHOUSE ECOMMERCE_WH;
 --     orders.csv
 --     order_items.csv
 --
+-- IMPORTANT:
+-- The stage is fully qualified to prevent Snowflake from
+-- resolving it against the wrong schema.
 -- ============================================================
 
-LIST @ECOMMERCE_STAGE;
+LIST @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE;
 
 
 -- ============================================================
--- STEP 3: LOAD CUSTOMERS
+-- STEP 5: LOAD CUSTOMERS
 -- ============================================================
 --
--- COPY INTO reads customers.csv from the Snowflake stage
--- and inserts the records into RAW_CUSTOMERS.
+-- Source:
+--     customers.csv
 --
--- The CSV format was created in:
+-- Destination:
+--     ECOMMERCE_DB.RAW.RAW_CUSTOMERS
 --
---     01_database_setup.sql
---
--- CSV_FORMAT already knows:
---
---     - The first row is a header
---     - Values are comma-separated
---     - Optional double quotes are allowed
---     - Extra spaces should be trimmed
+-- FILE_FORMAT:
+--     ECOMMERCE_DB.RAW.CSV_FORMAT
 --
 -- ON_ERROR = 'ABORT_STATEMENT'
 --
--- means:
+-- If Snowflake encounters a loading error, the COPY operation
+-- stops instead of silently loading incomplete/bad data.
 --
--- If Snowflake encounters a loading error, stop the COPY
--- operation instead of silently loading bad data.
---
--- This is useful for our pipeline because we don't want
--- Python to continue as if the load succeeded when the
--- source data contains a loading problem.
+-- This is important for our ETL pipeline because Python should
+-- not continue to the next stage if the RAW load fails.
 -- ============================================================
 
-COPY INTO RAW_CUSTOMERS
-FROM @ECOMMERCE_STAGE/customers.csv
-FILE_FORMAT = (FORMAT_NAME = CSV_FORMAT)
+COPY INTO ECOMMERCE_DB.RAW.RAW_CUSTOMERS
+FROM @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/customers.csv
+FILE_FORMAT = (
+    FORMAT_NAME = ECOMMERCE_DB.RAW.CSV_FORMAT
+)
 ON_ERROR = 'ABORT_STATEMENT';
 
 
 -- ============================================================
--- STEP 4: LOAD PRODUCTS
+-- STEP 6: LOAD PRODUCTS
 -- ============================================================
 --
 -- Source:
---
---     @ECOMMERCE_STAGE/products.csv
+--     products.csv
 --
 -- Destination:
---
---     RAW_PRODUCTS
+--     ECOMMERCE_DB.RAW.RAW_PRODUCTS
 -- ============================================================
 
-COPY INTO RAW_PRODUCTS
-FROM @ECOMMERCE_STAGE/products.csv
-FILE_FORMAT = (FORMAT_NAME = CSV_FORMAT)
+COPY INTO ECOMMERCE_DB.RAW.RAW_PRODUCTS
+FROM @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/products.csv
+FILE_FORMAT = (
+    FORMAT_NAME = ECOMMERCE_DB.RAW.CSV_FORMAT
+)
 ON_ERROR = 'ABORT_STATEMENT';
 
 
 -- ============================================================
--- STEP 5: LOAD ORDERS
+-- STEP 7: LOAD ORDERS
 -- ============================================================
 --
 -- Source:
---
---     @ECOMMERCE_STAGE/orders.csv
+--     orders.csv
 --
 -- Destination:
---
---     RAW_ORDERS
+--     ECOMMERCE_DB.RAW.RAW_ORDERS
 -- ============================================================
 
-COPY INTO RAW_ORDERS
-FROM @ECOMMERCE_STAGE/orders.csv
-FILE_FORMAT = (FORMAT_NAME = CSV_FORMAT)
+COPY INTO ECOMMERCE_DB.RAW.RAW_ORDERS
+FROM @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/orders.csv
+FILE_FORMAT = (
+    FORMAT_NAME = ECOMMERCE_DB.RAW.CSV_FORMAT
+)
 ON_ERROR = 'ABORT_STATEMENT';
 
 
 -- ============================================================
--- STEP 6: LOAD ORDER ITEMS
+-- STEP 8: LOAD ORDER ITEMS
 -- ============================================================
 --
 -- Source:
---
---     @ECOMMERCE_STAGE/order_items.csv
+--     order_items.csv
 --
 -- Destination:
---
---     RAW_ORDER_ITEMS
+--     ECOMMERCE_DB.RAW.RAW_ORDER_ITEMS
 -- ============================================================
 
-COPY INTO RAW_ORDER_ITEMS
-FROM @ECOMMERCE_STAGE/order_items.csv
-FILE_FORMAT = (FORMAT_NAME = CSV_FORMAT)
+COPY INTO ECOMMERCE_DB.RAW.RAW_ORDER_ITEMS
+FROM @ECOMMERCE_DB.RAW.ECOMMERCE_STAGE/order_items.csv
+FILE_FORMAT = (
+    FORMAT_NAME = ECOMMERCE_DB.RAW.CSV_FORMAT
+)
 ON_ERROR = 'ABORT_STATEMENT';
 
 
 -- ============================================================
--- STEP 7: VERIFY ROW COUNTS
+-- STEP 9: VERIFY RAW TABLE ROW COUNTS
 -- ============================================================
 --
--- These queries allow us to confirm that data exists in each
--- RAW table after the COPY operations.
+-- These queries verify that records exist in all four RAW
+-- tables after the COPY operations.
 --
--- Expected based on our generated dataset:
+-- Based on the dataset we generated:
 --
 --     CUSTOMERS     → 100 rows
 --     PRODUCTS      → 50 rows
 --     ORDERS        → 500 rows
 --     ORDER_ITEMS   → depends on generated data
 --
--- The exact number of order items can vary because the
--- dataset generator randomly creates product lines per order.
+-- The exact ORDER_ITEMS count depends on how many product
+-- lines were randomly generated for each order.
+--
+-- IMPORTANT:
+-- These are validation queries only. They do not modify data.
 -- ============================================================
 
 SELECT
     'RAW_CUSTOMERS' AS table_name,
     COUNT(*) AS row_count
-FROM RAW_CUSTOMERS
+FROM ECOMMERCE_DB.RAW.RAW_CUSTOMERS
 
 UNION ALL
 
 SELECT
     'RAW_PRODUCTS' AS table_name,
     COUNT(*) AS row_count
-FROM RAW_PRODUCTS
+FROM ECOMMERCE_DB.RAW.RAW_PRODUCTS
 
 UNION ALL
 
 SELECT
     'RAW_ORDERS' AS table_name,
     COUNT(*) AS row_count
-FROM RAW_ORDERS
+FROM ECOMMERCE_DB.RAW.RAW_ORDERS
 
 UNION ALL
 
 SELECT
     'RAW_ORDER_ITEMS' AS table_name,
     COUNT(*) AS row_count
-FROM RAW_ORDER_ITEMS;
+FROM ECOMMERCE_DB.RAW.RAW_ORDER_ITEMS;
 
 
 -- ============================================================
--- LOAD COMPLETE
+-- STEP 10: LOAD VERIFICATION
 -- ============================================================
 --
--- At this point:
+-- At this point the pipeline should have successfully moved
+-- data through the following stages:
 --
---                 CSV FILES
---                     │
---                     │ Python
---                     ▼
---              SNOWFLAKE STAGE
---                     │
---                     │ COPY INTO
---                     ▼
---                  RAW
---                     │
---          ┌──────────┼──────────┐
---          ▼          ▼          ▼
---      CUSTOMERS   PRODUCTS    ORDERS
---                                  │
---                                  ▼
---                             ORDER_ITEMS
 --
--- The next stage is data quality validation.
+--                  LOCAL CSV FILES
+--                         │
+--                         │
+--                         │ Python PUT
+--                         ▼
+--              ┌──────────────────────┐
+--              │  SNOWFLAKE STAGE     │
+--              │                      │
+--              │ ECOMMERCE_DB         │
+--              │   └── RAW            │
+--              │       └── STAGE      │
+--              └──────────┬───────────┘
+--                         │
+--                         │ COPY INTO
+--                         ▼
+--              ┌──────────────────────┐
+--              │      RAW TABLES      │
+--              │                      │
+--              │ RAW_CUSTOMERS        │
+--              │ RAW_PRODUCTS         │
+--              │ RAW_ORDERS           │
+--              │ RAW_ORDER_ITEMS      │
+--              └──────────┬───────────┘
+--                         │
+--                         ▼
+--                 DATA QUALITY CHECK
 --
--- Next file:
+--
+-- The next stage of the pipeline is:
 --
 --     04_data_quality.sql
 --
+-- ============================================================
+
+
+-- ============================================================
+-- END OF 03_LOAD_DATA.SQL
 -- ============================================================
