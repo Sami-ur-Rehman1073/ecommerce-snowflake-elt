@@ -77,3 +77,34 @@ SELECT
 FROM RAW.RAW_ORDERS
 GROUP BY order_id
 HAVING COUNT(*) > 1;
+
+
+-- Orders without customers
+
+SELECT COUNT(*) AS orphan_orders
+FROM RAW.RAW_ORDERS o
+LEFT JOIN RAW.RAW_CUSTOMERS c
+    ON o.customer_id = c.customer_id
+WHERE c.customer_id IS NULL;
+
+
+-- Order items without products
+
+
+SELECT COUNT(*) AS orphan_order_items
+FROM RAW.RAW_ORDER_ITEMS oi
+LEFT JOIN RAW.RAW_PRODUCTS p
+    ON oi.product_id = p.product_id
+WHERE p.product_id IS NULL;
+
+
+
+-- Order items without orders
+
+
+SELECT COUNT(*) AS orphan_order_items
+FROM RAW.RAW_ORDER_ITEMS oi
+LEFT JOIN RAW.RAW_ORDERS o
+    ON oi.order_id = o.order_id
+WHERE o.order_id IS NULL;
+
