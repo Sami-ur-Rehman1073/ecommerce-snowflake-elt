@@ -3,18 +3,8 @@ SQL Executor
 ============
 
 Purpose:
-    This module is responsible for reading SQL files from the
-    project's sql/ directory and executing them in Snowflake.
-
-Architecture:
-
-    SQL files
-        |
-        v
-    sql_executor.py
-        |
-        v
-    Snowflake
+    This module reads SQL files from the project's sql/
+    directory and executes their SQL statements in Snowflake.
 
 Responsibilities:
 
@@ -28,7 +18,7 @@ Responsibilities:
 
     Python:
         - Read SQL files
-        - Execute SQL
+        - Execute SQL statements
         - Handle errors
         - Control pipeline execution
 """
@@ -38,7 +28,7 @@ Responsibilities:
 # IMPORTS
 # ============================================================
 
-from io import StringIO
+import re
 
 from python.config import SQL_DIR
 
@@ -60,22 +50,17 @@ def read_sql_file(file_name: str) -> str:
     -------
     str
         Complete SQL content.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the SQL file does not exist.
     """
 
     # --------------------------------------------------------
-    # Build the complete path to the SQL file.
+    # Build the SQL file path.
     # --------------------------------------------------------
 
     sql_file = SQL_DIR / file_name
 
 
     # --------------------------------------------------------
-    # Check that the file exists.
+    # Make sure the SQL file exists.
     # --------------------------------------------------------
 
     if not sql_file.exists():
@@ -86,7 +71,7 @@ def read_sql_file(file_name: str) -> str:
 
 
     # --------------------------------------------------------
-    # Make sure the path is actually a file.
+    # Make sure the path points to a file.
     # --------------------------------------------------------
 
     if not sql_file.is_file():
@@ -97,15 +82,103 @@ def read_sql_file(file_name: str) -> str:
 
 
     # --------------------------------------------------------
-    # Read the SQL file using UTF-8 encoding.
+    # Read the file.
     # --------------------------------------------------------
 
-    sql_content = sql_file.read_text(
+    return sql_file.read_text(
         encoding="utf-8"
     )
 
 
-    return sql_content
+# ============================================================
+# REMOVE SQL COMMENTS
+# ============================================================
+
+def remove_sql_comments(sql: str) -> str:
+    """
+    Remove single-line SQL comments.
+
+    Our project SQL files use comments in this format:
+
+        -- This is a comment
+
+    Removing these comments before splitting the SQL script
+    prevents comment-only sections from being interpreted as
+    empty SQL statements.
+    """
+
+    # --------------------------------------------------------
+    # Remove everything from -- to the end of each line.
+    # --------------------------------------------------------
+
+    sql_without_comments = re.sub(
+        r"--[^\n]*",
+        "",
+        sql
+    )
+
+
+    return sql_without_comments
+
+
+# ============================================================
+# SPLIT SQL SCRIPT INTO STATEMENTS
+# ============================================================
+
+def split_sql_statements(sql: str) -> list[str]:
+    """
+    Split a SQL script into individual SQL statements.
+
+    Example:
+
+        USE DATABASE ECOMMERCE_DB;
+
+        USE SCHEMA RAW;
+
+    becomes:
+
+        [
+            "USE DATABASE ECOMMERCE_DB",
+            "USE SCHEMA RAW"
+        ]
+
+    Empty statements are removed.
+    """
+
+    # --------------------------------------------------------
+    # Remove comments first.
+    # --------------------------------------------------------
+
+    sql = remove_sql_comments(sql)
+
+
+    # --------------------------------------------------------
+    # Split statements using semicolon.
+    #
+    # Our project SQL files use semicolons to separate
+    # statements.
+    # --------------------------------------------------------
+
+    raw_statements = sql.split(";")
+
+
+    # --------------------------------------------------------
+    # Remove whitespace-only statements.
+    # --------------------------------------------------------
+
+    statements = []
+
+    for statement in raw_statements:
+
+        statement = statement.strip()
+
+
+        if statement:
+
+            statements.append(statement)
+
+
+    return statements
 
 
 # ============================================================
@@ -147,8 +220,7 @@ def execute_sql(connection, sql: str):
 
 
         # ----------------------------------------------------
-        # Return the cursor so the caller can inspect the
-        # result.
+        # Return the cursor.
         # ----------------------------------------------------
 
         return cursor
@@ -157,7 +229,7 @@ def execute_sql(connection, sql: str):
     except Exception:
 
         # ----------------------------------------------------
-        # Close the cursor if execution fails.
+        # Close cursor if execution fails.
         # ----------------------------------------------------
 
         cursor.close()
@@ -179,25 +251,25 @@ def execute_sql_file(connection, file_name: str):
         Active Snowflake connection.
 
     file_name : str
-        Name of the SQL file inside the sql directory.
+        Name of the SQL file.
 
     Returns
     -------
     list
-        List of Snowflake cursors generated by the SQL script.
+        List of cursors generated by the SQL statements.
 
     Notes
     -----
-    Snowflake's execute_stream() expects a file-like object.
+    Instead of passing the complete file directly to
+    execute_stream(), we split the file into valid SQL
+    statements first.
 
-    Therefore, the SQL string is wrapped in StringIO.
-
-    StringIO behaves like a normal file and provides methods
-    such as readline(), which execute_stream() expects.
+    This prevents empty statements from being sent to
+    Snowflake.
     """
 
     # --------------------------------------------------------
-    # Read the SQL file.
+    # Read SQL file.
     # --------------------------------------------------------
 
     sql_content = read_sql_file(
@@ -206,7 +278,7 @@ def execute_sql_file(connection, file_name: str):
 
 
     # --------------------------------------------------------
-    # Prevent execution of an empty SQL file.
+    # Make sure the file isn't empty.
     # --------------------------------------------------------
 
     if not sql_content.strip():
@@ -217,27 +289,28 @@ def execute_sql_file(connection, file_name: str):
 
 
     # --------------------------------------------------------
-    # Create a file-like object from the SQL string.
-    #
-    # This is the important fix.
-    #
-    # Instead of:
-    #
-    #     execute_stream(sql_content)
-    #
-    # we use:
-    #
-    #     execute_stream(StringIO(sql_content))
-    #
+    # Split the SQL file into individual statements.
     # --------------------------------------------------------
 
-    sql_stream = StringIO(
+    statements = split_sql_statements(
         sql_content
     )
 
 
     # --------------------------------------------------------
-    # Store all cursors returned by Snowflake.
+    # Make sure we actually found SQL statements.
+    # --------------------------------------------------------
+
+    if not statements:
+
+        raise ValueError(
+            f"No executable SQL statements found in: "
+            f"{file_name}"
+        )
+
+
+    # --------------------------------------------------------
+    # Store execution results.
     # --------------------------------------------------------
 
     cursors = []
@@ -246,19 +319,18 @@ def execute_sql_file(connection, file_name: str):
     try:
 
         # ----------------------------------------------------
-        # Execute the SQL script.
+        # Execute each statement separately.
         # ----------------------------------------------------
 
-        for cursor in connection.execute_stream(
-            sql_stream
-        ):
+        for statement in statements:
+
+            cursor = execute_sql(
+                connection,
+                statement
+            )
 
             cursors.append(cursor)
 
-
-        # ----------------------------------------------------
-        # Return the generated cursors.
-        # ----------------------------------------------------
 
         return cursors
 
@@ -266,8 +338,8 @@ def execute_sql_file(connection, file_name: str):
     except Exception:
 
         # ----------------------------------------------------
-        # If execution fails, close cursors that were already
-        # created.
+        # If one statement fails, close all cursors that have
+        # already been created.
         # ----------------------------------------------------
 
         for cursor in cursors:
@@ -282,12 +354,3 @@ def execute_sql_file(connection, file_name: str):
 
 
         raise
-
-
-    finally:
-
-        # ----------------------------------------------------
-        # Close the in-memory SQL file.
-        # ----------------------------------------------------
-
-        sql_stream.close()
