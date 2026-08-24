@@ -94,7 +94,7 @@ SQL_DIR = BASE_DIR / "sql"
 # Python will upload our CSV files here.
 # ============================================================
 
-SNOWFLAKE_STAGE = "@ECOMMERCE_STAGE"
+SNOWFLAKE_STAGE = "@ECOMMERCE_DB.RAW.ECOMMERCE_STAGE"
 
 
 # ============================================================
