@@ -73,6 +73,39 @@ USE WAREHOUSE ECOMMERCE_WH;
 
 
 -- ============================================================
+-- STEP 1: CLEAR PREVIOUS RAW DATA
+-- ============================================================
+--
+-- This project receives a complete snapshot of the source
+-- CSV files on every pipeline run.
+--
+-- Therefore, before loading the new snapshot, we remove the
+-- previous RAW data.
+--
+-- This prevents duplicate records when the pipeline is
+-- executed multiple times.
+--
+-- IMPORTANT:
+--
+-- This approach is suitable for our current full-refresh
+-- ETL project.
+--
+-- A production incremental pipeline would normally use a
+-- different strategy involving load tracking, MERGE,
+-- timestamps, or CDC.
+--
+-- ============================================================
+
+TRUNCATE TABLE RAW_ORDER_ITEMS;
+
+TRUNCATE TABLE RAW_ORDERS;
+
+TRUNCATE TABLE RAW_PRODUCTS;
+
+TRUNCATE TABLE RAW_CUSTOMERS;
+
+
+-- ============================================================
 -- STEP 4: CHECK THE SNOWFLAKE STAGE
 -- ============================================================
 --
